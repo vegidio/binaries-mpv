@@ -117,15 +117,18 @@ elseif(VCPKG_TARGET_IS_MINGW)
     # mpv looks for the shared SPIRV-Cross C API, but vcpkg only builds it
     # static, and its static .pc lists only -lspirv-cross-c. Use that .pc and
     # add the backend archives spirv-cross-c depends on (core last, for GNU ld).
+    # They're looked up in the .pc's libdir: with prefer_static (the DLL build
+    # below) find_library ignores -L flags and searches only compiler dirs.
     vcpkg_replace_string("${SOURCE_PATH}/meson.build"
         "spirv_cross = dependency('spirv-cross-c-shared', required:\n    get_option('spirv-cross').require(features['win32-desktop']))"
         "spirv_cross = dependency('spirv-cross-c', required:\n    get_option('spirv-cross').require(features['win32-desktop']))
 if spirv_cross.found()
-    spirv_cross = declare_dependency(dependencies: [spirv_cross] +
-        [cc.find_library('spirv-cross-glsl'), cc.find_library('spirv-cross-hlsl'),
-         cc.find_library('spirv-cross-msl'), cc.find_library('spirv-cross-cpp'),
-         cc.find_library('spirv-cross-reflect'), cc.find_library('spirv-cross-util'),
-         cc.find_library('spirv-cross-core')])
+    spirv_cross_dirs = [spirv_cross.get_variable('libdir')]
+    spirv_cross_libs = []
+    foreach l : ['glsl', 'hlsl', 'msl', 'cpp', 'reflect', 'util', 'core']
+        spirv_cross_libs += cc.find_library('spirv-cross-' + l, dirs: spirv_cross_dirs)
+    endforeach
+    spirv_cross = declare_dependency(dependencies: [spirv_cross] + spirv_cross_libs)
 endif"
     )
     list(APPEND OPTIONS

@@ -58,6 +58,11 @@ runs:
         # supported on ELF, OS/2, and Darwin"), so force it to static linkage even
         # in the dynamic triplet (it gets statically linked into the FFmpeg DLLs).
         find builder/triplets -name '*.cmake' -exec bash -c 'printf "\nif(PORT STREQUAL \"libvpx\")\n    set(VCPKG_LIBRARY_LINKAGE static)\nendif()\n" >> "$1"' _ {} \;
+        # zimg 3.0.6 uses std::exception_ptr without including <exception>; the
+        # libc++ in CLANGARM64 no longer pulls it in transitively (libstdc++ on
+        # MINGW64 still does), so force-include it. vcpkg requires C flags to be
+        # set whenever CXX flags are.
+        find builder/triplets -name '*.cmake' -exec bash -c 'printf "\nif(PORT STREQUAL \"zimg\")\n    set(VCPKG_C_FLAGS \"\${VCPKG_C_FLAGS}\")\n    set(VCPKG_CXX_FLAGS \"\${VCPKG_CXX_FLAGS} -include exception\")\nendif()\n" >> "$1"' _ {} \;
         # www.libssh.org has been intermittently unreachable (vcpkg#50969), which
         # aborts the ssh feature's source download ("won't retry"). Pre-seed vcpkg's
         # downloads/ cache with the byte-identical tarball from Debian's mirror;
