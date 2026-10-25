@@ -62,6 +62,12 @@ runs:
         # supported on ELF, OS/2, and Darwin"), so force it to static linkage even
         # in the dynamic triplet (it gets statically linked into the FFmpeg DLLs).
         find builder/triplets -name '*.cmake' -exec bash -c 'printf "\nif(PORT STREQUAL \"libvpx\")\n    set(VCPKG_LIBRARY_LINKAGE static)\nendif()\n" >> "$1"' _ {} \;
+        # Post-portfile hook for the MinGW triplets (fixes LuaJIT's ELF-only
+        # luajit.pc flags); see cmake/mingw-post-portfile.cmake.
+        HOOK="$(cygpath -m "$GITHUB_WORKSPACE")/cmake/mingw-post-portfile.cmake"
+        for t in builder/triplets/community/*-mingw-*.cmake; do
+          printf '\nlist(APPEND VCPKG_POST_PORTFILE_INCLUDES "%s")\n' "$HOOK" >> "$t"
+        done
         # zimg 3.0.6 uses std::exception_ptr without including <exception>; the
         # libc++ in CLANGARM64 no longer pulls it in transitively (libstdc++ on
         # MINGW64 still does), so force-include it. vcpkg requires C flags to be
