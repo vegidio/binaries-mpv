@@ -143,8 +143,16 @@ endif()
 
 vcpkg_find_acquire_program(PYTHON3)
 
+# mpv's macOS code is Objective-C; vcpkg only puts the compilers for the listed
+# languages into its meson machine file, which matters for the x64 cross-build.
+set(LANGUAGES C CXX)
+if(VCPKG_TARGET_IS_OSX)
+    list(APPEND LANGUAGES OBJC)
+endif()
+
 vcpkg_configure_meson(
     SOURCE_PATH "${SOURCE_PATH}"
+    LANGUAGES ${LANGUAGES}
     OPTIONS
         ${OPTIONS}
     ADDITIONAL_BINARIES
@@ -167,6 +175,7 @@ if(VCPKG_TARGET_IS_MINGW AND VCPKG_LIBRARY_LINKAGE STREQUAL "static")
     set(VCPKG_LIBRARY_LINKAGE dynamic)
     vcpkg_configure_meson(
         SOURCE_PATH "${SOURCE_PATH}"
+        LANGUAGES ${LANGUAGES}
         OPTIONS
             ${OPTIONS}
             -Dprefer_static=true

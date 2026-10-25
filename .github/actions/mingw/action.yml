@@ -74,6 +74,9 @@ runs:
       env:
         MSYS2_PATH_TYPE: inherit
         VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/vcpkg_cache
+        # Host tools must be MinGW too: the default host triplet (x64-windows /
+        # arm64-windows, MSVC) can't build LuaJIT's buildvm, which luajit needs.
+        VCPKG_DEFAULT_HOST_TRIPLET: ${{ inputs.triplet-prefix }}-static
       run: |
         # Playback-focused FFmpeg: every decoder/demuxer/protocol/hwaccel, but none
         # of the encoder-only libraries (x264, x265, svt-av1, aom, lame, ...).
@@ -86,7 +89,11 @@ runs:
           FFMPEG="$BASE"
         fi
         ./builder/vcpkg install --overlay-ports=ports "ffmpeg[$FFMPEG]:${{ inputs.triplet-prefix }}-static" "mpv:${{ inputs.triplet-prefix }}-static"
-        ./builder/vcpkg install --overlay-ports=ports "ffmpeg[$FFMPEG]:${{ inputs.triplet-prefix }}-dynamic" "mpv:${{ inputs.triplet-prefix }}-dynamic"
+        # --recurse: the dynamic build needs LuaJIT's buildvm host tool. On native
+        # builds the host triplet is the static triplet built just above, so vcpkg
+        # has to rebuild static luajit (and mpv, which depends on it) with that
+        # feature added; without --recurse it refuses and stops.
+        ./builder/vcpkg install --recurse --overlay-ports=ports "ffmpeg[$FFMPEG]:${{ inputs.triplet-prefix }}-dynamic" "mpv:${{ inputs.triplet-prefix }}-dynamic"
 
     - name: Prepare binaries
       shell: msys2 {0}

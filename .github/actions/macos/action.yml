@@ -59,7 +59,11 @@ runs:
         BASE="gpl,avcodec,avdevice,avfilter,avformat,swresample,swscale,dav1d,vpx,opus,speex,ilbc,openjpeg,ass,freetype,fontconfig,fribidi,drawtext,iconv,bzip2,lzma,zlib,openssl,xml2,srt,ssh,dvdvideo,snappy,soxr"
         FFMPEG="$BASE,opengl"
         ./builder/vcpkg install --overlay-ports=ports "ffmpeg[$FFMPEG]:${{ inputs.triplet }}" "mpv:${{ inputs.triplet }}"
-        ./builder/vcpkg install --overlay-ports=ports "ffmpeg[$FFMPEG]:${{ inputs.triplet }}-dynamic" "mpv:${{ inputs.triplet }}-dynamic"
+        # --recurse: the dynamic build needs LuaJIT's buildvm host tool. On native
+        # builds the host triplet is the static triplet built just above, so vcpkg
+        # has to rebuild static luajit (and mpv, which depends on it) with that
+        # feature added; without --recurse it refuses and stops.
+        ./builder/vcpkg install --recurse --overlay-ports=ports "ffmpeg[$FFMPEG]:${{ inputs.triplet }}-dynamic" "mpv:${{ inputs.triplet }}-dynamic"
 
     - name: Prepare binaries
       shell: bash
