@@ -1,0 +1,115 @@
+name: "macos"
+description: "Build static and dynamic libmpv for macOS"
+
+# Pinned upstream versions — bump these to upgrade.
+# vcpkg ref: master branch (FFmpeg 9.0.2)
+# mpv / libplacebo: pinned in ports/mpv and ports/libplacebo (overlay ports)
+
+inputs:
+  arch:
+    description: "Target architecture suffix (e.g. x64, arm64)"
+    required: true
+  triplet:
+    description: "vcpkg static triplet (e.g. x64-osx); the dynamic triplet is derived as <triplet>-dynamic"
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Install dependencies
+      shell: bash
+      run: |
+        brew install nasm pkg-config autoconf autoconf-archive automake libtool
+        mkdir -p $GITHUB_WORKSPACE/static_${{ inputs.arch }}/lib
+        mkdir -p $GITHUB_WORKSPACE/dynamic_${{ inputs.arch }}/lib
+        mkdir -p $GITHUB_WORKSPACE/vcpkg_cache
+
+    - name: Cache vcpkg binaries
+      uses: actions/cache@v4
+      with:
+        path: ${{ github.workspace }}/vcpkg_cache
+        key: vcpkg-${{ runner.os }}-${{ inputs.triplet }}-master
+
+    - name: Install vcpkg
+      shell: bash
+      run: |
+        git clone --depth 1 --branch master https://github.com/microsoft/vcpkg builder
+        ./builder/bootstrap-vcpkg.sh
+        # Build only Release (skip Debug) for every triplet to roughly halve build time.
+        find builder/triplets -name '*.cmake' -exec bash -c 'echo "set(VCPKG_BUILD_TYPE release)" >> "$1"' _ {} \;
+        # www.libssh.org has been intermittently unreachable (vcpkg#50969), which
+        # aborts the ssh feature's source download ("won't retry"). Pre-seed vcpkg's
+        # downloads/ cache with the byte-identical tarball from Debian's mirror;
+        # vcpkg re-verifies the SHA512, so this only changes where the bytes come from.
+        LIBSSH_VER=$(grep -m1 -oE '"version[^"]*": *"[^"]+"' builder/ports/libssh/vcpkg.json | grep -oE '[0-9]+(\.[0-9]+)+')
+        mkdir -p builder/downloads
+        curl -fL --connect-timeout 10 --max-time 120 --retry 5 --retry-all-errors --retry-delay 3 \
+          -o "builder/downloads/libssh-${LIBSSH_VER}.tar.xz" \
+          "https://deb.debian.org/debian/pool/main/libs/libssh/libssh_${LIBSSH_VER}.orig.tar.xz" \
+          || echo "::warning::libssh mirror pre-seed failed; vcpkg will fall back to upstream"
+
+    - name: Build libmpv
+      shell: bash
+      env:
+        VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/vcpkg_cache
+      run: |
+        # Playback-focused FFmpeg: every decoder/demuxer/protocol/hwaccel, but none
+        # of the encoder-only libraries (x264, x265, svt-av1, aom, lame, ...).
+        # VideoToolbox is built into FFmpeg on macOS; vulkan is off (no MoltenVK port).
+        BASE="gpl,avcodec,avdevice,avfilter,avformat,swresample,swscale,dav1d,vpx,opus,speex,ilbc,openjpeg,ass,freetype,fontconfig,fribidi,drawtext,iconv,bzip2,lzma,zlib,openssl,xml2,srt,ssh,dvdvideo,snappy,soxr"
+        FFMPEG="$BASE,opengl"
+        ./builder/vcpkg install --overlay-ports=ports "ffmpeg[$FFMPEG]:${{ inputs.triplet }}" "mpv:${{ inputs.triplet }}"
+        ./builder/vcpkg install --overlay-ports=ports "ffmpeg[$FFMPEG]:${{ inputs.triplet }}-dynamic" "mpv:${{ inputs.triplet }}-dynamic"
+
+    - name: Prepare binaries
+      shell: bash
+      run: |
+        ST=$GITHUB_WORKSPACE/builder/installed/${{ inputs.triplet }}
+        DY=$GITHUB_WORKSPACE/builder/installed/${{ inputs.triplet }}-dynamic
+        OUT_ST=$GITHUB_WORKSPACE/static_${{ inputs.arch }}
+        OUT_DY=$GITHUB_WORKSPACE/dynamic_${{ inputs.arch }}
+
+        cp -r $ST/include $OUT_ST/include
+        cp $ST/lib/*.a $OUT_ST/lib
+        # pkg-config files, relocated so `pkg-config --static --libs mpv` works
+        # from wherever the zip is extracted.
+        cp -r $ST/lib/pkgconfig $OUT_ST/lib/pkgconfig
+        sed -i '' 's|^prefix=.*|prefix=${pcfiledir}/../..|' $OUT_ST/lib/pkgconfig/*.pc
+        # Strip DWARF debug info from the static .a files (it's ~90% of their size
+        # and is not needed to link against them). -S removes debug symbols while
+        # keeping the symbol table, so the libraries still link.
+        strip -S $OUT_ST/lib/*.a
+        # libmpv's Swift code autolinks the toolchain's back-deployment archives
+        # (libswiftCompatibility*.a), which live in Xcode, not in the macOS SDK.
+        # Ship them next to libmpv.a so `-L<zip>/lib` is all a consumer needs.
+        cp "$(dirname "$(xcrun -find swiftc)")"/../lib/swift/macosx/libswiftCompatibility*.a $OUT_ST/lib
+
+        cp -r $DY/include $OUT_DY/include
+        cp -a $DY/lib/*.dylib $OUT_DY/lib
+        # Make libmpv find its bundled dependencies next to itself, wherever the
+        # consumer puts the folder (the deps already use @rpath install names).
+        LIBMPV=$(find $OUT_DY/lib -name 'libmpv.*.dylib' -type f | head -1)
+        if ! otool -l "$LIBMPV" | grep -q '@loader_path'; then
+          install_name_tool -add_rpath @loader_path "$LIBMPV"
+          # Editing load commands invalidates the signature; arm64 refuses to load
+          # unsigned code, so re-apply the ad-hoc signature.
+          codesign --force --sign - "$LIBMPV"
+        fi
+        otool -L "$LIBMPV"
+
+    - name: Zip local
+      shell: bash
+      run: |
+        cd $GITHUB_WORKSPACE/static_${{ inputs.arch }}
+        7z a -tzip -mx=9 $GITHUB_WORKSPACE/static_osx_${{ inputs.arch }}.zip include lib
+
+        cd $GITHUB_WORKSPACE/dynamic_${{ inputs.arch }}
+        # -snl: store the .dylib symlinks as links (future-proofs against a 7-Zip
+        # that follows symlinks and would duplicate every library).
+        7z a -tzip -mx=9 -snl $GITHUB_WORKSPACE/dynamic_osx_${{ inputs.arch }}.zip include lib
+
+    - name: Save artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: binaries-osx-${{ inputs.arch }}
+        path: "*.zip"

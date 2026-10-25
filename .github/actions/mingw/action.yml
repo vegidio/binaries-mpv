@@ -1,0 +1,175 @@
+name: "mingw"
+description: "Build static/dynamic libmpv for MinGW and the self-contained DLL for MSVC"
+
+# Pinned upstream versions — bump these to upgrade.
+# vcpkg ref: master branch (FFmpeg 9.0.2)
+# mpv / libplacebo: pinned in ports/mpv and ports/libplacebo (overlay ports)
+#
+# Produces three zips per arch: static_mingw, dynamic_mingw and dynamic_windows.
+# The "windows" one is for MSVC consumers: mpv only builds with GCC/Clang on
+# Windows, so it ships the self-contained libmpv-2.dll built by the mpv port on
+# the MinGW static triplet, plus an MSVC import library generated here.
+
+inputs:
+  arch:
+    description: "Target architecture suffix (e.g. x64, arm64)"
+    required: true
+  msystem:
+    description: "MSYS2 environment (e.g. MINGW64, CLANGARM64)"
+    required: true
+  packages:
+    description: "MSYS2 packages to install (newline-separated)"
+    required: true
+  triplet-prefix:
+    description: "vcpkg triplet prefix (e.g. x64-mingw); -static and -dynamic are derived from it"
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Install NASM
+      uses: ilammy/setup-nasm@v1
+
+    - name: Install MSYS2
+      uses: msys2/setup-msys2@v2
+      with:
+        msystem: ${{ inputs.msystem }}
+        update: true
+        install: ${{ inputs.packages }}
+
+    - name: Cache vcpkg binaries
+      uses: actions/cache@v4
+      with:
+        path: ${{ github.workspace }}/vcpkg_cache
+        key: vcpkg-${{ runner.os }}-${{ inputs.triplet-prefix }}-master
+
+    - name: Install vcpkg
+      shell: bash
+      run: |
+        mkdir -p $GITHUB_WORKSPACE/static_${{ inputs.arch }}/lib
+        mkdir -p $GITHUB_WORKSPACE/dynamic_${{ inputs.arch }}/lib
+        mkdir -p $GITHUB_WORKSPACE/windows_${{ inputs.arch }}/lib
+        mkdir -p $GITHUB_WORKSPACE/vcpkg_cache
+        git clone --depth 1 --branch master https://github.com/microsoft/vcpkg builder
+        ./builder/bootstrap-vcpkg.sh
+        # Build only Release (skip Debug) for every triplet to roughly halve build time.
+        find builder/triplets -name '*.cmake' -exec bash -c 'echo "set(VCPKG_BUILD_TYPE release)" >> "$1"' _ {} \;
+        # libvpx cannot build as a shared library on MinGW ("--enable-shared only
+        # supported on ELF, OS/2, and Darwin"), so force it to static linkage even
+        # in the dynamic triplet (it gets statically linked into the FFmpeg DLLs).
+        find builder/triplets -name '*.cmake' -exec bash -c 'printf "\nif(PORT STREQUAL \"libvpx\")\n    set(VCPKG_LIBRARY_LINKAGE static)\nendif()\n" >> "$1"' _ {} \;
+        # www.libssh.org has been intermittently unreachable (vcpkg#50969), which
+        # aborts the ssh feature's source download ("won't retry"). Pre-seed vcpkg's
+        # downloads/ cache with the byte-identical tarball from Debian's mirror;
+        # vcpkg re-verifies the SHA512, so this only changes where the bytes come from.
+        LIBSSH_VER=$(grep -m1 -oE '"version[^"]*": *"[^"]+"' builder/ports/libssh/vcpkg.json | grep -oE '[0-9]+(\.[0-9]+)+')
+        mkdir -p builder/downloads
+        curl -fL --connect-timeout 10 --max-time 120 --retry 5 --retry-all-errors --retry-delay 3 \
+          -o "builder/downloads/libssh-${LIBSSH_VER}.tar.xz" \
+          "https://deb.debian.org/debian/pool/main/libs/libssh/libssh_${LIBSSH_VER}.orig.tar.xz" \
+          || echo "::warning::libssh mirror pre-seed failed; vcpkg will fall back to upstream"
+
+    - name: Build libmpv
+      shell: msys2 {0}
+      env:
+        MSYS2_PATH_TYPE: inherit
+        VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/vcpkg_cache
+      run: |
+        # Playback-focused FFmpeg: every decoder/demuxer/protocol/hwaccel, but none
+        # of the encoder-only libraries (x264, x265, svt-av1, aom, lame, ...).
+        # d3d11va/dxva2 are built into FFmpeg on Windows; nvcodec and opengl are
+        # unsupported on Windows-ARM.
+        BASE="gpl,avcodec,avdevice,avfilter,avformat,swresample,swscale,dav1d,vpx,opus,speex,ilbc,openjpeg,ass,freetype,fontconfig,fribidi,drawtext,iconv,bzip2,lzma,zlib,openssl,xml2,srt,ssh,dvdvideo,snappy,soxr,vulkan"
+        if [ "${{ inputs.arch }}" = "x64" ]; then
+          FFMPEG="$BASE,opengl,nvcodec"
+        else
+          FFMPEG="$BASE"
+        fi
+        ./builder/vcpkg install --overlay-ports=ports "ffmpeg[$FFMPEG]:${{ inputs.triplet-prefix }}-static" "mpv:${{ inputs.triplet-prefix }}-static"
+        ./builder/vcpkg install --overlay-ports=ports "ffmpeg[$FFMPEG]:${{ inputs.triplet-prefix }}-dynamic" "mpv:${{ inputs.triplet-prefix }}-dynamic"
+
+    - name: Prepare binaries
+      shell: msys2 {0}
+      run: |
+        ST="$GITHUB_WORKSPACE/builder/installed/${{ inputs.triplet-prefix }}-static"
+        DY="$GITHUB_WORKSPACE/builder/installed/${{ inputs.triplet-prefix }}-dynamic"
+        OUT_ST="$GITHUB_WORKSPACE/static_${{ inputs.arch }}"
+        OUT_DY="$GITHUB_WORKSPACE/dynamic_${{ inputs.arch }}"
+        OUT_WIN="$GITHUB_WORKSPACE/windows_${{ inputs.arch }}"
+
+        cp -r "$ST/include" "$OUT_ST/"
+        cp "$ST"/lib/*.a "$OUT_ST/lib/"
+        # pkg-config files, relocated so `pkg-config --static --libs mpv` works
+        # from wherever the zip is extracted.
+        cp -r "$ST/lib/pkgconfig" "$OUT_ST/lib/pkgconfig"
+        sed -i 's|^prefix=.*|prefix=${pcfiledir}/../..|' "$OUT_ST"/lib/pkgconfig/*.pc
+        # Strip DWARF debug info from the static .a files (it's ~90% of their size
+        # and is not needed to link against them). Run under MSYS2 so the toolchain
+        # strip matches the target (GNU strip on MINGW64, llvm-strip on CLANGARM64);
+        # --strip-debug keeps the symbol table, so the libraries still link.
+        strip --strip-debug "$OUT_ST"/lib/*.a
+
+        cp -r "$DY/include" "$OUT_DY/"
+        cp "$DY"/bin/*.dll "$OUT_DY/lib/"
+        # Bundle the toolchain runtime DLLs (libgcc_s/libstdc++/libwinpthread on
+        # MINGW64, libc++/libunwind on CLANGARM64) that the DLLs import, repeating
+        # until no new ones appear (runtimes can import each other).
+        while :; do
+          added=0
+          for dep in $(objdump -p "$OUT_DY"/lib/*.dll | sed -n 's/^\s*DLL Name: //p' | sort -u); do
+            if [ ! -f "$OUT_DY/lib/$dep" ] && [ -f "$MSYSTEM_PREFIX/bin/$dep" ]; then
+              cp "$MSYSTEM_PREFIX/bin/$dep" "$OUT_DY/lib/"
+              echo "bundled runtime: $dep"
+              added=1
+            fi
+          done
+          [ $added = 0 ] && break
+        done
+
+        # Windows (MSVC) variant: the self-contained DLL + headers. The import
+        # library is generated by the next step with the MSVC toolchain.
+        mkdir -p "$OUT_WIN/include"
+        cp -r "$ST/include/mpv" "$OUT_WIN/include/"
+        cp "$ST/bin/libmpv-2.dll" "$OUT_WIN/lib/"
+        echo "libmpv-2.dll imports:"
+        objdump -p "$OUT_WIN/lib/libmpv-2.dll" | sed -n 's/^\s*DLL Name: //p'
+
+    - name: Set up MSVC tools
+      uses: ilammy/msvc-dev-cmd@v1
+      with:
+        arch: ${{ inputs.arch == 'x64' && 'x64' || 'arm64' }}
+
+    - name: Create MSVC import library
+      shell: pwsh
+      run: |
+        $ErrorActionPreference = "Stop"
+        $lib = "windows_${{ inputs.arch }}/lib"
+        # Build a .def from the DLL's export table, then let lib.exe turn it into
+        # an MSVC import library (mpv.lib) for libmpv-2.dll.
+        $exports = dumpbin /exports "$lib/libmpv-2.dll" |
+          Select-String '^\s+\d+\s+[0-9A-F]+\s+[0-9A-F]{8}\s+(\S+)' |
+          ForEach-Object { $_.Matches[0].Groups[1].Value }
+        if (-not $exports) { throw "no exports found in libmpv-2.dll" }
+        @("LIBRARY libmpv-2.dll", "EXPORTS") + $exports | Set-Content -Encoding ascii "$lib/mpv.def"
+        lib /nologo /def:"$lib/mpv.def" /machine:${{ inputs.arch }} /out:"$lib/mpv.lib"
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        Remove-Item "$lib/mpv.def", "$lib/mpv.exp" -ErrorAction SilentlyContinue
+        dumpbin /dependents "$lib/libmpv-2.dll"
+
+    - name: Zip local
+      shell: bash
+      run: |
+        cd $GITHUB_WORKSPACE/static_${{ inputs.arch }}
+        7z a -tzip -mx=9 $GITHUB_WORKSPACE/static_mingw_${{ inputs.arch }}.zip include lib
+
+        cd $GITHUB_WORKSPACE/dynamic_${{ inputs.arch }}
+        7z a -tzip -mx=9 $GITHUB_WORKSPACE/dynamic_mingw_${{ inputs.arch }}.zip include lib
+
+        cd $GITHUB_WORKSPACE/windows_${{ inputs.arch }}
+        7z a -tzip -mx=9 $GITHUB_WORKSPACE/dynamic_windows_${{ inputs.arch }}.zip include lib
+
+    - name: Save artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: binaries-mingw-${{ inputs.arch }}
+        path: "*.zip"

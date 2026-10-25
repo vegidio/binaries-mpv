@@ -1,0 +1,27 @@
+{
+  "name": "libplacebo",
+  "version": "7.360.1",
+  "description": "Reusable library for GPU-accelerated image/video processing primitives and shaders (the rendering core of mpv)",
+  "homepage": "https://code.videolan.org/videolan/libplacebo",
+  "license": "LGPL-2.1-or-later",
+  "dependencies": [
+    "lcms",
+    {
+      "name": "shaderc",
+      "platform": "!osx"
+    },
+    {
+      "name": "spirv-cross",
+      "platform": "windows"
+    },
+    {
+      "name": "vcpkg-tool-meson",
+      "host": true
+    },
+    {
+      "name": "vulkan-loader",
+      "platform": "!osx"
+    },
+    "xxhash"
+  ]
+}

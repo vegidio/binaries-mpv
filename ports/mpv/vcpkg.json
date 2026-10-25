@@ -1,0 +1,58 @@
+{
+  "name": "mpv",
+  "version": "0.41.0",
+  "description": "libmpv, the client library of the mpv media player",
+  "homepage": "https://mpv.io",
+  "license": "GPL-2.0-or-later",
+  "dependencies": [
+    {
+      "name": "ffmpeg",
+      "default-features": false,
+      "features": [
+        "avcodec",
+        "avdevice",
+        "avfilter",
+        "avformat",
+        "swresample",
+        "swscale"
+      ]
+    },
+    "lcms",
+    "libarchive",
+    "libass",
+    "libbluray",
+    "libdvdnav",
+    "libiconv",
+    "libjpeg-turbo",
+    "libplacebo",
+    {
+      "name": "libva",
+      "features": [
+        "wayland",
+        "x11"
+      ],
+      "platform": "linux"
+    },
+    "luajit",
+    "mujs",
+    {
+      "name": "shaderc",
+      "platform": "windows"
+    },
+    {
+      "name": "spirv-cross",
+      "platform": "windows"
+    },
+    "uchardet",
+    {
+      "name": "vcpkg-tool-meson",
+      "host": true
+    },
+    {
+      "name": "vulkan-loader",
+      "platform": "!osx"
+    },
+    "zimg",
+    "zlib"
+  ]
+}
