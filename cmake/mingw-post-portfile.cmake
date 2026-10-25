@@ -6,13 +6,14 @@
 # Anything linking LuaJIT statically through pkg-config (the self-contained
 # libmpv-2.dll, and consumers of the static zip via `pkg-config --static mpv`)
 # then fails: lld rejects -E, GNU ld warns about --export-dynamic, and there is
-# no libdl on Windows.
+# no libdl on Windows. On static triplets vcpkg_fixup_pkgconfig has already
+# merged Libs.private into Libs, so the flags are removed from any line.
 if(PORT STREQUAL "luajit")
     foreach(pc IN ITEMS "${CURRENT_PACKAGES_DIR}/lib/pkgconfig/luajit.pc" "${CURRENT_PACKAGES_DIR}/debug/lib/pkgconfig/luajit.pc")
         if(EXISTS "${pc}")
             file(READ "${pc}" contents)
-            string(REGEX REPLACE "(Libs\\.private:[^\n]*) -Wl,-E" "\\1" contents "${contents}")
-            string(REGEX REPLACE "(Libs\\.private:[^\n]*) -ldl" "\\1" contents "${contents}")
+            string(REGEX REPLACE "[ \t]\"?(-Wl,-E|-ldl)\"?([ \t\r\n])" "\\2" contents "${contents}")
+            string(REGEX REPLACE "[ \t]\"?(-Wl,-E|-ldl)\"?([ \t\r\n])" "\\2" contents "${contents}")
             file(WRITE "${pc}" "${contents}")
         endif()
     endforeach()
