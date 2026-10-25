@@ -131,6 +131,14 @@ if spirv_cross.found()
     spirv_cross = declare_dependency(dependencies: [spirv_cross] + spirv_cross_libs)
 endif"
     )
+    # mpv only needs libdl for C plugins on POSIX, but it probes for it on every
+    # platform, and MSYS2 ships a dlfcn-win32 libdl that would get picked up.
+    # That adds a -ldl (with no static libdl) to the DLL link and to the static
+    # mpv.pc, so don't look for it on Windows.
+    vcpkg_replace_string("${SOURCE_PATH}/meson.build"
+        "libdl = dependency('dl', required: false)"
+        "libdl = dependency('', required: false)"
+    )
     list(APPEND OPTIONS
         -Dd3d11=enabled
         -Dd3d-hwaccel=enabled

@@ -36,11 +36,15 @@ runs:
         mkdir -p $GITHUB_WORKSPACE/dynamic_${{ inputs.arch }}/lib
         mkdir -p $GITHUB_WORKSPACE/vcpkg_cache
 
-    - name: Cache vcpkg binaries
-      uses: actions/cache@v4
+    # Restore/save are split (instead of actions/cache) so the cache is saved
+    # even when the build fails: otherwise every failed attempt rebuilds all
+    # ports from scratch. Keys are per-run because cache entries are immutable.
+    - name: Restore vcpkg binaries
+      uses: actions/cache/restore@v4
       with:
         path: ${{ github.workspace }}/vcpkg_cache
-        key: vcpkg-${{ runner.os }}-${{ inputs.triplet }}-master
+        key: vcpkg-${{ runner.os }}-${{ inputs.triplet }}-master-${{ github.run_id }}
+        restore-keys: vcpkg-${{ runner.os }}-${{ inputs.triplet }}-master
 
     - name: Install vcpkg
       shell: bash
@@ -76,6 +80,13 @@ runs:
         # has to rebuild static luajit (and mpv, which depends on it) with that
         # feature added; without --recurse it refuses and stops.
         ./builder/vcpkg install --recurse --overlay-ports=ports "ffmpeg[$FFMPEG]:${{ inputs.triplet }}-dynamic" "mpv:${{ inputs.triplet }}-dynamic"
+
+    - name: Save vcpkg binaries
+      if: always()
+      uses: actions/cache/save@v4
+      with:
+        path: ${{ github.workspace }}/vcpkg_cache
+        key: vcpkg-${{ runner.os }}-${{ inputs.triplet }}-master-${{ github.run_id }}
 
     - name: Build static libva + libdrm
       shell: bash
@@ -158,6 +169,20 @@ runs:
         # the Linux runner follows them and stores three full copies of every shared
         # library, ~tripling the archive.
         7z a -tzip -mx=9 -snl $GITHUB_WORKSPACE/dynamic_linux_${{ inputs.arch }}.zip include lib
+
+    # On failure, keep vcpkg's per-port logs (plus mpv's ninja files and link
+    # response files, which hold the full command lines) for debugging.
+    - name: Save build logs
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: logs-linux-${{ inputs.arch }}
+        path: |
+          builder/buildtrees/**/*.log
+          builder/buildtrees/mpv/*-rel/build.ninja
+          builder/buildtrees/mpv/*-rel/*.rsp
+          builder/buildtrees/mpv/*-rel/meson-logs/*.txt
+        if-no-files-found: ignore
 
     - name: Save artifacts
       uses: actions/upload-artifact@v4
