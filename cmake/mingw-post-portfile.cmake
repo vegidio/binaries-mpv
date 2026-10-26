@@ -1,9 +1,9 @@
 # Runs after each port's portfile on the MinGW triplets (wired up through
 # VCPKG_POST_PORTFILE_INCLUDES by the mingw action). It removes link flags
-# from installed .pc files that break static linking on Windows. These matter
-# for the self-contained libmpv-2.dll and for consumers of the static zip
-# (`pkg-config --static mpv`). On static triplets vcpkg_fixup_pkgconfig has
-# already merged Libs.private into Libs, so flags are removed from any line.
+# from installed .pc files that break static linking on Windows, for consumers
+# of the static zip (`pkg-config --static mpv`). On static triplets
+# vcpkg_fixup_pkgconfig has already merged Libs.private into Libs, so flags
+# are removed from any line.
 
 function(z_strip_pc_flags pc regex)
     file(READ "${pc}" contents)

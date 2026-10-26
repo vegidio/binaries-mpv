@@ -1,0 +1,187 @@
+name: "windows"
+description: "Build static/dynamic libmpv for Windows (MSVC)"
+
+# Pinned upstream versions — bump these to upgrade.
+# vcpkg ref: master branch (FFmpeg 9.0.2)
+# mpv / libplacebo: pinned in ports/mpv and ports/libplacebo (overlay ports)
+#
+# Produces two zips per arch: static_windows and dynamic_windows, both for the
+# dynamic CRT (/MD). Dependencies are built with cl.exe; mpv and libplacebo
+# don't build with it, so they use clang-cl (same ABI), the way mpv's own
+# *-pc-windows-msvc CI builds them.
+
+inputs:
+  arch:
+    description: "Target architecture (x64 or arm64)"
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Install NASM
+      uses: ilammy/setup-nasm@v1
+
+    # Restore/save are split (instead of actions/cache) so the cache is saved
+    # even when the build fails: otherwise every failed attempt rebuilds all
+    # ports from scratch. Keys are per-run because cache entries are immutable.
+    - name: Restore vcpkg binaries
+      uses: actions/cache/restore@v4
+      with:
+        path: ${{ github.workspace }}/vcpkg_cache
+        key: vcpkg-${{ runner.os }}-${{ inputs.arch }}-windows-master-${{ github.run_id }}
+        restore-keys: vcpkg-${{ runner.os }}-${{ inputs.arch }}-windows-master
+
+    - name: Install vcpkg
+      shell: bash
+      run: |
+        mkdir -p $GITHUB_WORKSPACE/static_${{ inputs.arch }}/lib
+        mkdir -p $GITHUB_WORKSPACE/dynamic_${{ inputs.arch }}/lib
+        mkdir -p $GITHUB_WORKSPACE/vcpkg_cache
+        git clone --depth 1 --branch master https://github.com/microsoft/vcpkg builder
+        ./builder/bootstrap-vcpkg.sh
+        # Build only Release (skip Debug) for every triplet to roughly halve build time.
+        find builder/triplets -name '*.cmake' -exec bash -c 'echo "set(VCPKG_BUILD_TYPE release)" >> "$1"' _ {} \;
+        # mpv and libplacebo are built with clang-cl; see cmake/clang-cl-toolchain.cmake.
+        # It includes vcpkg's stock windows.cmake by relative path, so it lives
+        # next to it.
+        cp cmake/clang-cl-toolchain.cmake builder/scripts/toolchains/clang-cl.cmake
+        CHAINLOAD="$(cygpath -m "$GITHUB_WORKSPACE")/builder/scripts/toolchains/clang-cl.cmake"
+        for t in $(find builder/triplets -name '*-windows.cmake' -o -name '*-windows-static-md.cmake'); do
+          printf '\nif(PORT MATCHES "^(mpv|libplacebo)$")\n    set(VCPKG_CHAINLOAD_TOOLCHAIN_FILE "%s")\nendif()\n' "$CHAINLOAD" >> "$t"
+        done
+        # www.libssh.org has been intermittently unreachable (vcpkg#50969), which
+        # aborts the ssh feature's source download ("won't retry"). Pre-seed vcpkg's
+        # downloads/ cache with the byte-identical tarball from Debian's mirror;
+        # vcpkg re-verifies the SHA512, so this only changes where the bytes come from.
+        LIBSSH_VER=$(grep -m1 -oE '"version[^"]*": *"[^"]+"' builder/ports/libssh/vcpkg.json | grep -oE '[0-9]+(\.[0-9]+)+')
+        mkdir -p builder/downloads
+        curl -fL --connect-timeout 10 --max-time 120 --retry 5 --retry-all-errors --retry-delay 3 \
+          -o "builder/downloads/libssh-${LIBSSH_VER}.tar.xz" \
+          "https://deb.debian.org/debian/pool/main/libs/libssh/libssh_${LIBSSH_VER}.orig.tar.xz" \
+          || echo "::warning::libssh mirror pre-seed failed; vcpkg will fall back to upstream"
+
+    - name: Build libmpv
+      shell: bash
+      env:
+        VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/vcpkg_cache
+      run: |
+        # Playback-focused FFmpeg: every decoder/demuxer/protocol/hwaccel, but none
+        # of the encoder-only libraries (x264, x265, svt-av1, aom, lame, ...).
+        # d3d11va/dxva2 are built into FFmpeg on Windows; nvcodec and opengl are
+        # unsupported on Windows-ARM.
+        BASE="gpl,avcodec,avdevice,avfilter,avformat,swresample,swscale,dav1d,vpx,opus,speex,ilbc,openjpeg,ass,freetype,fontconfig,fribidi,drawtext,iconv,bzip2,lzma,zlib,openssl,xml2,srt,ssh,dvdvideo,snappy,soxr,vulkan"
+        if [ "${{ inputs.arch }}" = "x64" ]; then
+          FFMPEG="$BASE,opengl,nvcodec"
+        else
+          FFMPEG="$BASE"
+        fi
+        ./builder/vcpkg install --overlay-ports=ports "ffmpeg[$FFMPEG]:${{ inputs.arch }}-windows-static-md" "mpv:${{ inputs.arch }}-windows-static-md"
+        # --recurse: the dynamic triplet is also the host triplet, so ports
+        # already built there as host dependencies may need rebuilding with
+        # more features; without --recurse vcpkg refuses and stops.
+        ./builder/vcpkg install --recurse --overlay-ports=ports "ffmpeg[$FFMPEG]:${{ inputs.arch }}-windows" "mpv:${{ inputs.arch }}-windows"
+
+    - name: Save vcpkg binaries
+      if: always()
+      uses: actions/cache/save@v4
+      with:
+        path: ${{ github.workspace }}/vcpkg_cache
+        key: vcpkg-${{ runner.os }}-${{ inputs.arch }}-windows-master-${{ github.run_id }}
+
+    - name: Prepare binaries
+      shell: bash
+      run: |
+        ST="$GITHUB_WORKSPACE/builder/installed/${{ inputs.arch }}-windows-static-md"
+        DY="$GITHUB_WORKSPACE/builder/installed/${{ inputs.arch }}-windows"
+        OUT_ST="$GITHUB_WORKSPACE/static_${{ inputs.arch }}"
+        OUT_DY="$GITHUB_WORKSPACE/dynamic_${{ inputs.arch }}"
+
+        cp -r "$ST/include" "$OUT_ST/"
+        cp "$ST"/lib/*.lib "$OUT_ST/lib/"
+        # pkg-config files, relocated so `pkg-config --static --libs mpv` works
+        # from wherever the zip is extracted.
+        cp -r "$ST/lib/pkgconfig" "$OUT_ST/lib/pkgconfig"
+        sed -i 's|^prefix=.*|prefix=${pcfiledir}/../..|' "$OUT_ST"/lib/pkgconfig/*.pc
+        # Ports that only build as DLLs (e.g. the Vulkan loader, vulkan-1.dll)
+        # leave a DLL next to their import library even on the static triplet.
+        for dll in "$ST"/bin/*.dll; do
+          [ -f "$dll" ] || continue
+          cp "$dll" "$OUT_ST/lib/"
+          echo "bundled DLL: $(basename "$dll")"
+        done
+
+        cp -r "$DY/include" "$OUT_DY/"
+        cp "$DY"/bin/*.dll "$OUT_DY/lib/"
+        # Import libraries (and the few static-only ones), to link with MSVC.
+        cp "$DY"/lib/*.lib "$OUT_DY/lib/"
+
+    - name: Set up MSVC tools
+      uses: ilammy/msvc-dev-cmd@v1
+      with:
+        arch: ${{ inputs.arch }}
+
+    # Link a tiny libmpv client against each zip with cl.exe /MD and run it, so
+    # a missing library or DLL fails the build instead of reaching a release.
+    - name: Smoke test
+      shell: pwsh
+      run: |
+        $ErrorActionPreference = "Stop"
+        $PSNativeCommandUseErrorActionPreference = $true
+        $tmp = "$env:RUNNER_TEMP/smoke"
+        New-Item -ItemType Directory -Force $tmp | Out-Null
+        Set-Content -Encoding ascii "$tmp/test.c" @'
+        #include <stdio.h>
+        #include <mpv/client.h>
+
+        int main(void) {
+            mpv_handle *mpv = mpv_create();
+            if (!mpv || mpv_initialize(mpv) < 0)
+                return 1;
+            printf("libmpv client API %lu\n", mpv_client_api_version());
+            mpv_terminate_destroy(mpv);
+            return 0;
+        }
+        '@
+        $pkgconf = "builder/installed/${{ inputs.arch }}-windows/tools/pkgconf/pkgconf.exe"
+
+        $st = Resolve-Path "static_${{ inputs.arch }}"
+        $env:PKG_CONFIG_PATH = "$st/lib/pkgconfig"
+        $cflags = (& $pkgconf --cflags --msvc-syntax mpv) -split '\s+' | Where-Object { $_ }
+        $libs = (& $pkgconf --static --libs --msvc-syntax mpv) -split '\s+' | Where-Object { $_ }
+        cl /nologo /MD "$tmp/test.c" @cflags /Fo"$tmp/static.obj" /Fe"$tmp/static.exe" /link @libs
+        $env:PATH = "$st/lib;$env:PATH"
+        & "$tmp/static.exe"
+
+        $dy = Resolve-Path "dynamic_${{ inputs.arch }}"
+        cl /nologo /MD "$tmp/test.c" /I"$dy/include" /Fo"$tmp/dynamic.obj" /Fe"$tmp/dynamic.exe" /link /libpath:"$dy/lib" mpv.lib
+        $env:PATH = "$dy/lib;$env:PATH"
+        & "$tmp/dynamic.exe"
+
+    - name: Zip local
+      shell: bash
+      run: |
+        cd $GITHUB_WORKSPACE/static_${{ inputs.arch }}
+        7z a -tzip -mx=9 $GITHUB_WORKSPACE/static_windows_${{ inputs.arch }}.zip include lib
+
+        cd $GITHUB_WORKSPACE/dynamic_${{ inputs.arch }}
+        7z a -tzip -mx=9 $GITHUB_WORKSPACE/dynamic_windows_${{ inputs.arch }}.zip include lib
+
+    # On failure, keep vcpkg's per-port logs (plus mpv's ninja files and link
+    # response files, which hold the full command lines) for debugging.
+    - name: Save build logs
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: logs-windows-${{ inputs.arch }}
+        path: |
+          builder/buildtrees/**/*.log
+          builder/buildtrees/mpv/*-rel/build.ninja
+          builder/buildtrees/mpv/*-rel/*.rsp
+          builder/buildtrees/*/*-rel/meson-logs/*.txt
+        if-no-files-found: ignore
+
+    - name: Save artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: binaries-windows-${{ inputs.arch }}
+        path: "*.zip"

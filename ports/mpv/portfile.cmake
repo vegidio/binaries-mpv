@@ -113,12 +113,13 @@ elseif(VCPKG_TARGET_IS_LINUX)
         -Dpipewire=enabled
         -Dalsa=enabled
     )
-elseif(VCPKG_TARGET_IS_MINGW)
+elseif(VCPKG_TARGET_IS_WINDOWS)
+    # MinGW and MSVC (clang-cl, chainloaded by the windows action) alike.
     # mpv looks for the shared SPIRV-Cross C API, but vcpkg only builds it
     # static, and its static .pc lists only -lspirv-cross-c. Use that .pc and
     # add the backend archives spirv-cross-c depends on (core last, for GNU ld).
-    # They're looked up in the .pc's libdir: with prefer_static (the DLL build
-    # below) find_library ignores -L flags and searches only compiler dirs.
+    # They're looked up in the .pc's libdir, since find_library ignores -L
+    # flags and searches only compiler dirs.
     vcpkg_replace_string("${SOURCE_PATH}/meson.build"
         "spirv_cross = dependency('spirv-cross-c-shared', required:\n    get_option('spirv-cross').require(features['win32-desktop']))"
         "spirv_cross = dependency('spirv-cross-c', required:\n    get_option('spirv-cross').require(features['win32-desktop']))
@@ -169,34 +170,6 @@ vcpkg_configure_meson(
 )
 
 vcpkg_install_meson()
-
-# On the MinGW static triplet, also produce a self-contained libmpv-2.dll for
-# MSVC consumers: link libmpv as a DLL against the static archives of FFmpeg
-# and every other dependency (prefer_static = `pkg-config --static`), with the
-# compiler runtime linked in too, so the DLL imports only Windows system DLLs.
-# Only the DLL is kept (in bin/); the static libmpv.a and its .pc stay as-is.
-if(VCPKG_TARGET_IS_MINGW AND VCPKG_LIBRARY_LINKAGE STREQUAL "static")
-    file(RENAME "${CURRENT_PACKAGES_DIR}/lib/pkgconfig/mpv.pc" "${CURRENT_BUILDTREES_DIR}/mpv-static.pc")
-    vcpkg_replace_string("${SOURCE_PATH}/meson.build"
-        "link_args: cc.get_supported_link_arguments(['-Wl,-Bsymbolic']),"
-        "link_args: cc.get_supported_link_arguments(['-Wl,-Bsymbolic', '-static', '-static-libgcc', '-static-libstdc++']),"
-    )
-    set(VCPKG_LIBRARY_LINKAGE dynamic)
-    vcpkg_configure_meson(
-        SOURCE_PATH "${SOURCE_PATH}"
-        LANGUAGES ${LANGUAGES}
-        OPTIONS
-            ${OPTIONS}
-            -Dprefer_static=true
-        ADDITIONAL_BINARIES
-            "python3 = ['${PYTHON3}']"
-    )
-    vcpkg_install_meson()
-    set(VCPKG_LIBRARY_LINKAGE static)
-    file(REMOVE "${CURRENT_PACKAGES_DIR}/lib/libmpv.dll.a")
-    file(RENAME "${CURRENT_BUILDTREES_DIR}/mpv-static.pc" "${CURRENT_PACKAGES_DIR}/lib/pkgconfig/mpv.pc")
-    set(VCPKG_POLICY_DLLS_IN_STATIC_LIBRARY enabled)
-endif()
 
 vcpkg_copy_pdbs()
 vcpkg_fixup_pkgconfig()

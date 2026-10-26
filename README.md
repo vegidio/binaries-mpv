@@ -9,7 +9,7 @@ The binaries are **not** the `mpv` player application. Only the library and head
 x64 & arm64 for macOS, Linux and Windows. On Windows there are two variants:
 
 - **MinGW** — static and dynamic, built with GCC (x64) or Clang (arm64) in MSYS2.
-- **Windows (MSVC)** — dynamic only. mpv builds only with GCC/Clang on Windows, so this variant is a single **self-contained `libmpv-2.dll`**: FFmpeg, every other dependency and the compiler runtime are linked into it. Besides Windows system DLLs it imports only the Vulkan loader, `vulkan-1.dll`, which is shipped next to it (GPU drivers usually install one too). It comes with an MSVC import library (`mpv.lib`) for `*-pc-windows-msvc` / Visual Studio consumers.
+- **Windows (MSVC)** — static and dynamic, for `*-pc-windows-msvc` / Visual Studio consumers. Dependencies are built with MSVC (`cl.exe`); mpv and libplacebo, which don't build with `cl.exe`, are built with `clang-cl` (same ABI), as mpv's own MSVC CI does. Both variants use the **dynamic CRT (`/MD`)**, so your app must be built with `/MD` too (Rust: the default, i.e. without `+crt-static`) and needs the Visual C++ Redistributable, which is usually already installed.
 
 | Archive                        | Contents                                                                  |
 |--------------------------------|---------------------------------------------------------------------------|
@@ -19,9 +19,12 @@ x64 & arm64 for macOS, Linux and Windows. On Windows there are two variants:
 | `dynamic_linux_<arch>.zip`     | `include/`, `lib/*.so*`                                                   |
 | `static_mingw_<arch>.zip`      | `include/`, `lib/*.a`, `lib/pkgconfig/*.pc`                               |
 | `dynamic_mingw_<arch>.zip`     | `include/`, `lib/*.dll` (incl. the MinGW runtime DLLs)¹                   |
-| `dynamic_windows_<arch>.zip`   | `include/mpv/`, `lib/libmpv-2.dll` (self-contained), `lib/vulkan-1.dll`, `lib/mpv.lib` |
+| `static_windows_<arch>.zip`    | `include/`, `lib/*.lib`, `lib/pkgconfig/*.pc`, `lib/*.dll`²               |
+| `dynamic_windows_<arch>.zip`   | `include/`, `lib/*.dll`, `lib/*.lib` (import libraries)                   |
 
 ¹ A few libraries can't be built as DLLs with MinGW (libvpx, LuaJIT, zimg, SPIRV-Tools), so they are linked statically into the DLLs that use them (e.g. LuaJIT and zimg are inside `libmpv-2.dll`) instead of shipping as separate DLLs.
+
+² Only libraries vcpkg can't build statically, e.g. the Vulkan loader (`vulkan-1.dll`); ship them next to your `.exe`.
 
 Versions: **mpv 0.41.0** and **libplacebo 7.360.1**, built as [vcpkg overlay ports](ports/), on top of [vcpkg](https://vcpkg.io) `master` (**FFmpeg 9.0.2**). Only **Release** binaries are produced.
 
@@ -36,6 +39,12 @@ export PKG_CONFIG_PATH=/path/to/static_<os>_<arch>/lib/pkgconfig
 cc app.c $(pkg-config --cflags mpv) $(pkg-config --static --libs mpv)
 ```
 
+For **Windows (MSVC)**, the same `.pc` files work with `pkgconf`'s `--msvc-syntax`, which outputs `cl.exe`/`link.exe` flags:
+
+```sh
+cl /MD app.c $(pkgconf --cflags --msvc-syntax mpv) /link $(pkgconf --static --libs --msvc-syntax mpv)
+```
+
 On **Linux**, the display and audio stacks stay **dynamically linked to the system**: X11, Wayland, EGL/GL, GBM, libdisplay-info, VDPAU, PulseAudio, PipeWire and ALSA. The OpenGL/EGL driver must be the user's own, and these libraries are on every desktop. Everything else (FFmpeg, codecs, libplacebo, libass, VA-API, libdrm, …) is in the archive.
 
 On **macOS**, only Apple system frameworks and `/usr/lib` libraries (including the Swift runtime in `/usr/lib/swift`, part of the OS since 10.14.4) are linked dynamically. libmpv contains some Swift code; the Swift back-deployment archives it needs (`libswiftCompatibility*.a`) are included in `lib/`, so no Xcode-specific link flags are needed.
@@ -46,7 +55,7 @@ macOS and Linux libraries find each other through `@rpath`/`@loader_path` and `$
 
 ## Binary size & debug stripping
 
-Static libraries are **stripped of debug information** before packaging, using `strip --strip-debug` (Linux/MinGW) and `strip -S` (macOS). Only debug sections are removed; the symbol table is kept, so the libraries link exactly as before.
+Static libraries are **stripped of debug information** before packaging, using `strip --strip-debug` (Linux/MinGW) and `strip -S` (macOS). MSVC libraries keep their debug information in `.pdb` files, which are not shipped. Only debug sections are removed; the symbol table is kept, so the libraries link exactly as before.
 
 ## Feature matrix
 
