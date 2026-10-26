@@ -55,7 +55,7 @@ macOS and Linux libraries find each other through `@rpath`/`@loader_path` and `$
 
 ## Binary size & debug stripping
 
-Static libraries are **stripped of debug information** before packaging, using `strip --strip-debug` (Linux/MinGW) and `strip -S` (macOS). The MSVC libraries are compiled without debug information (vcpkg's default `/Z7` is dropped). Only debug sections are removed; the symbol table is kept, so the libraries link exactly as before.
+Static libraries are **stripped of debug information** before packaging, using `strip --strip-debug` (Linux/MinGW) and `strip -S` (macOS). The MSVC libraries are compiled without vcpkg's default `/Z7`, and the debug sections some ports add anyway (FFmpeg, OpenSSL) are removed with `llvm-objcopy --strip-debug`. The `static_windows` zip also contains only the libraries libmpv links (`pkg-config --static --libs mpv`). Only debug sections are removed; the symbol table is kept, so the libraries link exactly as before.
 
 ## Feature matrix
 

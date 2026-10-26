@@ -42,10 +42,10 @@ runs:
         # Build only Release (skip Debug) for every triplet to roughly halve build time.
         find builder/triplets -name '*.cmake' -exec bash -c 'echo "set(VCPKG_BUILD_TYPE release)" >> "$1"' _ {} \;
         # vcpkg's Windows toolchain compiles Release with /Z7, which embeds full
-        # debug info in every object, so static .lib files come out 5-10x bigger
-        # (there is no strip for MSVC archives). Drop it; DLLs still get PDBs,
-        # which aren't shipped. Every build system (meson, make, ffmpeg) takes
-        # its flags from this toolchain.
+        # debug info in every object, so static .lib files come out 3-5x bigger.
+        # Drop it; DLLs still get PDBs, which aren't shipped. Ports that add
+        # their own debug flags are handled by the "Strip debug info" step,
+        # but that can't process every library (e.g. clang-cl's mpv.lib).
         sed -i '/_FLAGS_RELEASE /s| /Z7 | |' builder/scripts/toolchains/windows.cmake
         if grep -E '_FLAGS_RELEASE .*/Z7' builder/scripts/toolchains/windows.cmake; then
           echo "::error::failed to remove /Z7 from vcpkg's Release flags"
@@ -108,7 +108,6 @@ runs:
         OUT_DY="$GITHUB_WORKSPACE/dynamic_${{ inputs.arch }}"
 
         cp -r "$ST/include" "$OUT_ST/"
-        cp "$ST"/lib/*.lib "$OUT_ST/lib/"
         # pkg-config files, relocated so `pkg-config --static --libs mpv` works
         # from wherever the zip is extracted.
         cp -r "$ST/lib/pkgconfig" "$OUT_ST/lib/pkgconfig"
@@ -117,6 +116,18 @@ runs:
         # their .pc; with MSVC the C++ runtime comes in through /MD on its own.
         grep -lE '(^|\s)-l(stdc|c)\+\+(\s|$)' "$OUT_ST"/lib/pkgconfig/*.pc | xargs -r -n1 basename | sed 's/^/dropping -lstdc++\/-lc++ from: /' || true
         sed -i -E ':a; s/(^|\s)-l(stdc|c)\+\+(\s|$)/\1\3/; ta' "$OUT_ST"/lib/pkgconfig/*.pc
+        # Ship only the libraries libmpv actually links (its `--static` closure),
+        # not everything the dependencies installed (e.g. harfbuzz-subset, the
+        # extra SPIRV-Tools libraries, abseil). Names that aren't in lib/ are
+        # Windows system libraries.
+        PKGCONF="$GITHUB_WORKSPACE/builder/installed/${{ inputs.arch }}-windows/tools/pkgconf/pkgconf.exe"
+        LIBS=$(PKG_CONFIG_PATH="$OUT_ST/lib/pkgconfig" "$PKGCONF" --static --libs mpv | tr -d '\r' | tr ' ' '\n' \
+          | sed -n -e 's/^-l//p' -e 's|^.*/\([^/]*\)\.lib"\{0,1\}$|\1|p' | sort -u)
+        for l in $LIBS; do
+          [ -f "$ST/lib/$l.lib" ] && cp "$ST/lib/$l.lib" "$OUT_ST/lib/"
+        done
+        [ -f "$OUT_ST/lib/mpv.lib" ] || { echo "::error::mpv.lib not in pkg-config output"; exit 1; }
+        echo "shipping $(ls "$OUT_ST"/lib/*.lib | wc -l) of $(ls "$ST"/lib/*.lib | wc -l) static libraries"
         # Ports that only build as DLLs (e.g. the Vulkan loader, vulkan-1.dll)
         # leave a DLL next to their import library even on the static triplet.
         for dll in "$ST"/bin/*.dll; do
@@ -131,6 +142,34 @@ runs:
         # import libraries of its dependencies or static-only ports already
         # linked into the DLLs.
         cp "$DY/lib/mpv.lib" "$OUT_DY/lib/"
+
+    # Dropping /Z7 from vcpkg's toolchain doesn't reach ports that add their
+    # own debug flags: FFmpeg's configure (debug is on unless --disable-debug,
+    # which vcpkg doesn't pass) and OpenSSL's Configure. Strip the CodeView
+    # sections (.debug$S/.debug$T) from the static libraries instead, as
+    # binaries-ffmpeg does; the symbol table stays, so they still link.
+    - name: Strip debug info
+      shell: pwsh
+      run: |
+        $objcopy = (Get-Command llvm-objcopy -ErrorAction SilentlyContinue).Source
+        if (-not $objcopy) { $objcopy = "C:\Program Files\LLVM\bin\llvm-objcopy.exe" }
+        if (-not (Test-Path $objcopy)) { choco install llvm -y; $objcopy = "C:\Program Files\LLVM\bin\llvm-objcopy.exe" }
+        # llvm-objcopy rejects a few libraries (e.g. import libraries such as
+        # vulkan-1.lib): strip into a temp file, swap it in only on success, and
+        # keep the others as they are (they still link).
+        $ErrorActionPreference = "Continue"
+        $PSNativeCommandUseErrorActionPreference = $false
+        Get-ChildItem "static_${{ inputs.arch }}/lib" -Filter *.lib | ForEach-Object {
+          $src = $_.FullName; $tmp = "$src.stripped"
+          & $objcopy --strip-debug $src $tmp 2>$null
+          if ($LASTEXITCODE -eq 0 -and (Test-Path $tmp)) {
+            Move-Item -Force $tmp $src
+          } else {
+            if (Test-Path $tmp) { Remove-Item -Force $tmp }
+            Write-Host "skip (unsupported by llvm-objcopy): $($_.Name)"
+          }
+        }
+        exit 0
 
     - name: Set up MSVC tools
       uses: ilammy/msvc-dev-cmd@v1
