@@ -43,11 +43,12 @@ runs:
         find builder/triplets -name '*.cmake' -exec bash -c 'echo "set(VCPKG_BUILD_TYPE release)" >> "$1"' _ {} \;
         # mpv and libplacebo are built with clang-cl; see cmake/clang-cl-toolchain.cmake.
         # It includes vcpkg's stock windows.cmake by relative path, so it lives
-        # next to it.
+        # next to it. With a chainloaded toolchain vcpkg skips the Visual Studio
+        # environment (no VCINSTALLDIR, no rc.exe) unless VCPKG_LOAD_VCVARS_ENV is on.
         cp cmake/clang-cl-toolchain.cmake builder/scripts/toolchains/clang-cl.cmake
         CHAINLOAD="$(cygpath -m "$GITHUB_WORKSPACE")/builder/scripts/toolchains/clang-cl.cmake"
         for t in $(find builder/triplets -name '*-windows.cmake' -o -name '*-windows-static-md.cmake'); do
-          printf '\nif(PORT MATCHES "^(mpv|libplacebo)$")\n    set(VCPKG_CHAINLOAD_TOOLCHAIN_FILE "%s")\nendif()\n' "$CHAINLOAD" >> "$t"
+          printf '\nif(PORT MATCHES "^(mpv|libplacebo)$")\n    set(VCPKG_CHAINLOAD_TOOLCHAIN_FILE "%s")\n    set(VCPKG_LOAD_VCVARS_ENV ON)\nendif()\n' "$CHAINLOAD" >> "$t"
         done
         # www.libssh.org has been intermittently unreachable (vcpkg#50969), which
         # aborts the ssh feature's source download ("won't retry"). Pre-seed vcpkg's
