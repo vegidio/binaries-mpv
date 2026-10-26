@@ -143,7 +143,17 @@ runs:
         # and is not needed to link against them). Run under MSYS2 so the toolchain
         # strip matches the target (GNU strip on MINGW64, llvm-strip on CLANGARM64);
         # --strip-debug keeps the symbol table, so the libraries still link.
-        strip --strip-debug "$OUT_ST"/lib/*.a
+        # Strip one archive at a time into a temp file and swap it in only on
+        # success: llvm-strip rejects some archives ("unsupported object file
+        # format"), and those are kept unstripped (they still link).
+        for a in "$OUT_ST"/lib/*.a; do
+          if strip --strip-debug -o "$a.stripped" "$a" 2>/dev/null; then
+            mv -f "$a.stripped" "$a"
+          else
+            rm -f "$a.stripped"
+            echo "skip (unsupported by strip): $(basename "$a")"
+          fi
+        done
 
         cp -r "$DY/include" "$OUT_DY/"
         cp "$DY"/bin/*.dll "$OUT_DY/lib/"
