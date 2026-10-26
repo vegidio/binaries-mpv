@@ -103,6 +103,10 @@ runs:
         # from wherever the zip is extracted.
         cp -r "$ST/lib/pkgconfig" "$OUT_ST/lib/pkgconfig"
         sed -i 's|^prefix=.*|prefix=${pcfiledir}/../..|' "$OUT_ST"/lib/pkgconfig/*.pc
+        # Some C++ ports record the GCC/Clang C++ runtime (-lstdc++/-lc++) in
+        # their .pc; with MSVC the C++ runtime comes in through /MD on its own.
+        grep -lE '(^|\s)-l(stdc|c)\+\+(\s|$)' "$OUT_ST"/lib/pkgconfig/*.pc | xargs -r -n1 basename | sed 's/^/dropping -lstdc++\/-lc++ from: /' || true
+        sed -i -E ':a; s/(^|\s)-l(stdc|c)\+\+(\s|$)/\1\3/; ta' "$OUT_ST"/lib/pkgconfig/*.pc
         # Ports that only build as DLLs (e.g. the Vulkan loader, vulkan-1.dll)
         # leave a DLL next to their import library even on the static triplet.
         for dll in "$ST"/bin/*.dll; do
