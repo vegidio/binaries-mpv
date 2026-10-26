@@ -58,10 +58,15 @@ runs:
         ./builder/bootstrap-vcpkg.sh
         # Build only Release (skip Debug) for every triplet to roughly halve build time.
         find builder/triplets -name '*.cmake' -exec bash -c 'echo "set(VCPKG_BUILD_TYPE release)" >> "$1"' _ {} \;
-        # libvpx cannot build as a shared library on MinGW ("--enable-shared only
-        # supported on ELF, OS/2, and Darwin"), so force it to static linkage even
-        # in the dynamic triplet (it gets statically linked into the FFmpeg DLLs).
-        find builder/triplets -name '*.cmake' -exec bash -c 'printf "\nif(PORT STREQUAL \"libvpx\")\n    set(VCPKG_LIBRARY_LINKAGE static)\nendif()\n" >> "$1"' _ {} \;
+        # Some ports can't be built as DLLs on MinGW, so force them to static
+        # linkage even in the dynamic triplet (they get linked into the DLLs
+        # that use them):
+        # - libvpx: "--enable-shared only supported on ELF, OS/2, and Darwin".
+        # - spirv-tools: upstream links its DLL with -static on MinGW, which
+        #   fails with GCC 16 (undefined __mingw_fe_dfl_env); only shaderc uses it.
+        # - luajit: its Makefile install isn't MinGW-aware for shared builds and
+        #   never installs lua51.dll's import library, so nothing can link it.
+        find builder/triplets -name '*.cmake' -exec bash -c 'printf "\nif(PORT MATCHES \"^(libvpx|spirv-tools|luajit)\$\")\n    set(VCPKG_LIBRARY_LINKAGE static)\nendif()\n" >> "$1"' _ {} \;
         # Post-portfile hook for the MinGW triplets (fixes LuaJIT's ELF-only
         # luajit.pc flags); see cmake/mingw-post-portfile.cmake.
         HOOK="$(cygpath -m "$GITHUB_WORKSPACE")/cmake/mingw-post-portfile.cmake"
