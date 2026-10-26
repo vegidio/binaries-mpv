@@ -57,6 +57,29 @@ runs:
         # objects that crash at runtime, so turn it off at the source instead.
         sed -i 's|set(OPTIONS_RELEASE "--enable-optimizations")|set(OPTIONS_RELEASE "--enable-optimizations --disable-debug")|' builder/ports/ffmpeg/portfile.cmake
         grep -q -- '--disable-debug")' builder/ports/ffmpeg/portfile.cmake || { echo "::error::failed to add --disable-debug to the ffmpeg port"; exit 1; }
+        # OpenSSL's Configure compiles its libraries with /Zi: the types go to a
+        # PDB, but every object keeps its per-function debug records (~40 MB in
+        # libcrypto.lib). vcpkg doesn't even install that PDB for static builds,
+        # so drop the flag there (the DLL build keeps it and installs the PDB).
+        cat > "$RUNNER_TEMP/openssl-no-debug.cmake" <<'EOF'
+        if(VCPKG_TARGET_IS_WINDOWS AND NOT VCPKG_TARGET_IS_MINGW AND VCPKG_LIBRARY_LINKAGE STREQUAL "static")
+            vcpkg_replace_string("${SOURCE_PATH}/Configurations/10-main.conf"
+                "lib_cflags       => add(\"/Zi /Fdossl_static.pdb\"),"
+                ""
+            )
+        endif()
+        EOF
+        sed -i "/^include(\"\${cmake_vars_file}\")$/r $RUNNER_TEMP/openssl-no-debug.cmake" builder/ports/openssl/portfile.cmake
+        grep -q 'Fdossl_static.pdb' builder/ports/openssl/portfile.cmake || { echo "::error::failed to patch the openssl port"; exit 1; }
+        # MSVC emits every inline function a C++ file sees into its object, even
+        # unreferenced ones (GCC and Clang don't), so C++ static libraries like
+        # SPIRV-Tools, glslang and harfbuzz come out up to 10x bigger than with
+        # MinGW: mostly duplicated symbols and sections. /Zc:inline drops the
+        # unreferenced ones. Only the static libraries are shipped, so only the
+        # static triplets get it. vcpkg requires C flags whenever C++ flags are set.
+        for t in $(find builder/triplets -name '*-windows-static-md.cmake'); do
+          printf '\nset(VCPKG_C_FLAGS "${VCPKG_C_FLAGS}")\nset(VCPKG_CXX_FLAGS "${VCPKG_CXX_FLAGS} /Zc:inline")\n' >> "$t"
+        done
         # mpv and libplacebo are built with clang-cl; see cmake/clang-cl-toolchain.cmake.
         # It includes vcpkg's stock windows.cmake by relative path, so it lives
         # next to it. With a chainloaded toolchain vcpkg skips the Visual Studio
