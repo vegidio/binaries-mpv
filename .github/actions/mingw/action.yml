@@ -66,7 +66,9 @@ runs:
         #   fails with GCC 16 (undefined __mingw_fe_dfl_env); only shaderc uses it.
         # - luajit: its Makefile install isn't MinGW-aware for shared builds and
         #   never installs lua51.dll's import library, so nothing can link it.
-        find builder/triplets -name '*.cmake' -exec bash -c 'printf "\nif(PORT MATCHES \"^(libvpx|spirv-tools|luajit)\$\")\n    set(VCPKG_LIBRARY_LINKAGE static)\nendif()\n" >> "$1"' _ {} \;
+        # - zimg: it relies on an export map instead of dllexport, which yields
+        #   a DLL with no exports under CLANGARM64's lld; only libmpv uses it.
+        find builder/triplets -name '*.cmake' -exec bash -c 'printf "\nif(PORT MATCHES \"^(libvpx|spirv-tools|luajit|zimg)\$\")\n    set(VCPKG_LIBRARY_LINKAGE static)\nendif()\n" >> "$1"' _ {} \;
         # Post-portfile hook for the MinGW triplets (fixes LuaJIT's ELF-only
         # luajit.pc flags); see cmake/mingw-post-portfile.cmake.
         HOOK="$(cygpath -m "$GITHUB_WORKSPACE")/cmake/mingw-post-portfile.cmake"
@@ -165,6 +167,22 @@ runs:
         mkdir -p "$OUT_WIN/include"
         cp -r "$ST/include/mpv" "$OUT_WIN/include/"
         cp "$ST/bin/libmpv-2.dll" "$OUT_WIN/lib/"
+        # Everything is linked in except the Vulkan loader (vulkan-1.dll), which
+        # vcpkg only builds as a DLL. GPU drivers usually install it, but ship
+        # the Khronos loader so libmpv-2.dll also loads on machines without a
+        # Vulkan runtime (it still finds the system's drivers). Any other
+        # non-system import would mean the DLL isn't self-contained: fail.
+        for dep in $(objdump -p "$OUT_WIN/lib/libmpv-2.dll" | sed -n 's/^\s*DLL Name: //p'); do
+          if [ -f "$ST/bin/$dep" ] || [ -f "$DY/bin/$dep" ] || [ -f "$MSYSTEM_PREFIX/bin/$dep" ]; then
+            if [ "$dep" = "vulkan-1.dll" ]; then
+              cp "$( [ -f "$ST/bin/$dep" ] && echo "$ST" || echo "$DY" )/bin/$dep" "$OUT_WIN/lib/"
+              echo "bundled: $dep"
+            else
+              echo "::error::libmpv-2.dll imports non-system $dep"
+              exit 1
+            fi
+          fi
+        done
         echo "libmpv-2.dll imports:"
         objdump -p "$OUT_WIN/lib/libmpv-2.dll" | sed -n 's/^\s*DLL Name: //p'
 

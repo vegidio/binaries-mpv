@@ -9,7 +9,7 @@ The binaries are **not** the `mpv` player application. Only the library and head
 x64 & arm64 for macOS, Linux and Windows. On Windows there are two variants:
 
 - **MinGW** — static and dynamic, built with GCC (x64) or Clang (arm64) in MSYS2.
-- **Windows (MSVC)** — dynamic only. mpv builds only with GCC/Clang on Windows, so this variant is a single **self-contained `libmpv-2.dll`**: FFmpeg, every other dependency and the compiler runtime are linked into it, so it imports only Windows system DLLs. It ships with an MSVC import library (`mpv.lib`) for `*-pc-windows-msvc` / Visual Studio consumers.
+- **Windows (MSVC)** — dynamic only. mpv builds only with GCC/Clang on Windows, so this variant is a single **self-contained `libmpv-2.dll`**: FFmpeg, every other dependency and the compiler runtime are linked into it. Besides Windows system DLLs it imports only the Vulkan loader, `vulkan-1.dll`, which is shipped next to it (GPU drivers usually install one too). It comes with an MSVC import library (`mpv.lib`) for `*-pc-windows-msvc` / Visual Studio consumers.
 
 | Archive                        | Contents                                                                  |
 |--------------------------------|---------------------------------------------------------------------------|
@@ -18,8 +18,10 @@ x64 & arm64 for macOS, Linux and Windows. On Windows there are two variants:
 | `static_linux_<arch>.zip`      | `include/`, `lib/*.a`, `lib/pkgconfig/*.pc`                               |
 | `dynamic_linux_<arch>.zip`     | `include/`, `lib/*.so*`                                                   |
 | `static_mingw_<arch>.zip`      | `include/`, `lib/*.a`, `lib/pkgconfig/*.pc`                               |
-| `dynamic_mingw_<arch>.zip`     | `include/`, `lib/*.dll` (incl. the MinGW runtime DLLs)                    |
-| `dynamic_windows_<arch>.zip`   | `include/mpv/`, `lib/libmpv-2.dll` (self-contained), `lib/mpv.lib`        |
+| `dynamic_mingw_<arch>.zip`     | `include/`, `lib/*.dll` (incl. the MinGW runtime DLLs)¹                   |
+| `dynamic_windows_<arch>.zip`   | `include/mpv/`, `lib/libmpv-2.dll` (self-contained), `lib/vulkan-1.dll`, `lib/mpv.lib` |
+
+¹ A few libraries can't be built as DLLs with MinGW (libvpx, LuaJIT, zimg, SPIRV-Tools), so they are linked statically into the DLLs that use them (e.g. LuaJIT and zimg are inside `libmpv-2.dll`) instead of shipping as separate DLLs.
 
 Versions: **mpv 0.41.0** and **libplacebo 7.360.1**, built as [vcpkg overlay ports](ports/), on top of [vcpkg](https://vcpkg.io) `master` (**FFmpeg 9.0.2**). Only **Release** binaries are produced.
 
