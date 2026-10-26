@@ -138,6 +138,14 @@ endif"
         "libdl = dependency('dl', required: false)"
         "libdl = dependency('', required: false)"
     )
+    # mpv passes windres' --codepage to the resource compiler; on MSVC that's
+    # rc.exe, which spells it /c.
+    if(NOT VCPKG_TARGET_IS_MINGW)
+        vcpkg_replace_string("${SOURCE_PATH}/meson.build"
+            "res_flags = ['--codepage=65001']"
+            "res_flags = ['/c', '65001']"
+        )
+    endif()
     list(APPEND OPTIONS
         -Dd3d11=enabled
         -Dd3d-hwaccel=enabled
