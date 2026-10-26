@@ -20,7 +20,7 @@ x64 & arm64 for macOS, Linux and Windows. On Windows there are two variants:
 | `static_mingw_<arch>.zip`      | `include/`, `lib/*.a`, `lib/pkgconfig/*.pc`                               |
 | `dynamic_mingw_<arch>.zip`     | `include/`, `lib/*.dll` (incl. the MinGW runtime DLLs)¹                   |
 | `static_windows_<arch>.zip`    | `include/`, `lib/*.lib`, `lib/pkgconfig/*.pc`, `lib/*.dll`²               |
-| `dynamic_windows_<arch>.zip`   | `include/`, `lib/*.dll`, `lib/*.lib` (import libraries)                   |
+| `dynamic_windows_<arch>.zip`   | `include/`, `lib/*.dll`, `lib/mpv.lib` (import library of `mpv-2.dll`)   |
 
 ¹ A few libraries can't be built as DLLs with MinGW (libvpx, LuaJIT, zimg, SPIRV-Tools), so they are linked statically into the DLLs that use them (e.g. LuaJIT and zimg are inside `libmpv-2.dll`) instead of shipping as separate DLLs.
 
@@ -55,7 +55,7 @@ macOS and Linux libraries find each other through `@rpath`/`@loader_path` and `$
 
 ## Binary size & debug stripping
 
-Static libraries are **stripped of debug information** before packaging, using `strip --strip-debug` (Linux/MinGW) and `strip -S` (macOS). MSVC libraries keep their debug information in `.pdb` files, which are not shipped. Only debug sections are removed; the symbol table is kept, so the libraries link exactly as before.
+Static libraries are **stripped of debug information** before packaging, using `strip --strip-debug` (Linux/MinGW) and `strip -S` (macOS). The MSVC libraries are compiled without debug information (vcpkg's default `/Z7` is dropped). Only debug sections are removed; the symbol table is kept, so the libraries link exactly as before.
 
 ## Feature matrix
 

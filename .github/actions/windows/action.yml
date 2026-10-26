@@ -41,6 +41,16 @@ runs:
         ./builder/bootstrap-vcpkg.sh
         # Build only Release (skip Debug) for every triplet to roughly halve build time.
         find builder/triplets -name '*.cmake' -exec bash -c 'echo "set(VCPKG_BUILD_TYPE release)" >> "$1"' _ {} \;
+        # vcpkg's Windows toolchain compiles Release with /Z7, which embeds full
+        # debug info in every object, so static .lib files come out 5-10x bigger
+        # (there is no strip for MSVC archives). Drop it; DLLs still get PDBs,
+        # which aren't shipped. Every build system (meson, make, ffmpeg) takes
+        # its flags from this toolchain.
+        sed -i '/_FLAGS_RELEASE /s| /Z7 | |' builder/scripts/toolchains/windows.cmake
+        if grep -E '_FLAGS_RELEASE .*/Z7' builder/scripts/toolchains/windows.cmake; then
+          echo "::error::failed to remove /Z7 from vcpkg's Release flags"
+          exit 1
+        fi
         # mpv and libplacebo are built with clang-cl; see cmake/clang-cl-toolchain.cmake.
         # It includes vcpkg's stock windows.cmake by relative path, so it lives
         # next to it. With a chainloaded toolchain vcpkg skips the Visual Studio
@@ -117,8 +127,10 @@ runs:
 
         cp -r "$DY/include" "$OUT_DY/"
         cp "$DY"/bin/*.dll "$OUT_DY/lib/"
-        # Import libraries (and the few static-only ones), to link with MSVC.
-        cp "$DY"/lib/*.lib "$OUT_DY/lib/"
+        # libmpv's import library, to link with MSVC. The other .lib files are
+        # import libraries of its dependencies or static-only ports already
+        # linked into the DLLs.
+        cp "$DY/lib/mpv.lib" "$OUT_DY/lib/"
 
     - name: Set up MSVC tools
       uses: ilammy/msvc-dev-cmd@v1
