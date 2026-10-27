@@ -19,12 +19,10 @@ x64 & arm64 for macOS, Linux and Windows. On Windows there are two variants:
 | `dynamic_linux_<arch>.zip`     | `include/`, `lib/*.so*`                                                   |
 | `static_mingw_<arch>.zip`      | `include/`, `lib/*.a`, `lib/pkgconfig/*.pc`                               |
 | `dynamic_mingw_<arch>.zip`     | `include/`, `lib/*.dll` (incl. the MinGW runtime DLLs)¹                   |
-| `static_windows_<arch>.zip`    | `include/`, `lib/*.lib`, `lib/pkgconfig/*.pc`, `lib/*.dll`²               |
+| `static_windows_<arch>.zip`    | `include/`, `lib/*.lib`, `lib/pkgconfig/*.pc`                             |
 | `dynamic_windows_<arch>.zip`   | `include/`, `lib/*.dll`, `lib/mpv.lib` (import library of `mpv-2.dll`)   |
 
 ¹ A few libraries can't be built as DLLs with MinGW (libvpx, LuaJIT, zimg, SPIRV-Tools), so they are linked statically into the DLLs that use them (e.g. LuaJIT and zimg are inside `libmpv-2.dll`) instead of shipping as separate DLLs.
-
-² Only libraries vcpkg can't build statically, e.g. the Vulkan loader (`vulkan-1.dll`); ship them next to your `.exe`.
 
 Versions: **mpv 0.41.0** and **libplacebo 7.360.1**, built as [vcpkg overlay ports](ports/), on top of [vcpkg](https://vcpkg.io) `master` (**FFmpeg 9.0.2**). Only **Release** binaries are produced.
 
@@ -68,7 +66,7 @@ Legend: ✅ available · ❌ not available. Columns are `OS-arch`. The `windows`
 | libplacebo             | GPU renderer (`vo=gpu-next`)         |    ✅    |     ✅     |    ✅    |     ✅     |     ✅     |      ✅      |
 | libass                 | ASS/SSA subtitles                    |    ✅    |     ✅     |    ✅    |     ✅     |     ✅     |      ✅      |
 | OpenGL                 | render API (`MPV_RENDER_API_TYPE_OPENGL`) |  ✅   |     ✅     |    ✅    |     ✅     |     ✅     |      ✅      |
-| Vulkan                 | `gpu-api=vulkan`                     |    ❌    |     ❌     |    ✅    |     ✅     |     ✅     |      ✅      |
+| Vulkan                 | `gpu-api=vulkan`                     |    ❌    |     ❌     |    ✅    |     ✅     |     ❌     |      ❌      |
 | D3D11                  | `gpu-api=d3d11`                      |    ❌    |     ❌     |    ❌    |     ❌     |     ✅     |      ✅      |
 | X11 / Wayland / DRM    | Linux windowing                      |    ❌    |     ❌     |    ✅    |     ✅     |     ❌     |      ❌      |
 | Cocoa                  | macOS windowing                      |    ✅    |     ✅     |    ❌    |     ❌     |     ❌     |      ❌      |
@@ -90,7 +88,7 @@ Legend: ✅ available · ❌ not available. Columns are `OS-arch`. The `windows`
 | VDPAU                 |    ❌    |     ❌     |    ✅    |     ✅     |     ❌     |      ❌      |
 | NVDEC / CUDA          |    ❌    |     ❌     |    ✅    |     ✅     |     ✅     |      ❌      |
 | D3D11VA / DXVA2       |    ❌    |     ❌     |    ❌    |     ❌     |     ✅     |      ✅      |
-| Vulkan video          |    ❌    |     ❌     |    ✅    |     ✅     |     ✅     |      ✅      |
+| Vulkan video          |    ❌    |     ❌     |    ✅    |     ✅     |     ❌     |      ❌      |
 
 ### Audio output
 
@@ -131,6 +129,7 @@ H.264, HEVC, VP9, MPEG-2/4, ProRes, AAC, AC-3, E-AC-3, DTS, FLAC, MP3, Vorbis, T
 | amf, qsv                                         | Hardware **encoding** only.                                                                |
 | zmq, opencl, sdl2                                | Not used for playback.                                                                     |
 | Vulkan on macOS                                  | vcpkg has no MoltenVK port; macOS renders through OpenGL and decodes through VideoToolbox. |
+| Vulkan on Windows (`gpu-api=vulkan`, `hwdec=vulkan`, `vf=gpu`) | libmpv embedders use the OpenGL render API, which has no Vulkan option; D3D11 (`gpu-api=d3d11`) and D3D11VA/DXVA2 cover rendering and decoding. Removing Vulkan removes the `vulkan-1.dll` runtime dependency. |
 | `cocoa-cb`, media keys, touch bar (macOS)        | Only used by the `mpv` player app, not by libmpv.                                          |
 | `fdk-aac`                                        | Non-redistributable; FFmpeg's native AAC decoder covers playback.                          |
 | rubberband                                       | Its vcpkg port (v4.0.0) fails to compile with modern compilers; `scaletempo2` (built in) does pitch-correct speed changes. |

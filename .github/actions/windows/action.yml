@@ -109,7 +109,7 @@ runs:
         # of the encoder-only libraries (x264, x265, svt-av1, aom, lame, ...).
         # d3d11va/dxva2 are built into FFmpeg on Windows; nvcodec and opengl are
         # unsupported on Windows-ARM.
-        BASE="gpl,avcodec,avdevice,avfilter,avformat,swresample,swscale,dav1d,vpx,opus,speex,ilbc,openjpeg,ass,freetype,fontconfig,fribidi,drawtext,iconv,bzip2,lzma,zlib,openssl,xml2,srt,ssh,dvdvideo,snappy,soxr,vulkan"
+        BASE="gpl,avcodec,avdevice,avfilter,avformat,swresample,swscale,dav1d,vpx,opus,speex,ilbc,openjpeg,ass,freetype,fontconfig,fribidi,drawtext,iconv,bzip2,lzma,zlib,openssl,xml2,srt,ssh,dvdvideo,snappy,soxr"
         if [ "${{ inputs.arch }}" = "x64" ]; then
           FFMPEG="$BASE,opengl,nvcodec"
         else
@@ -157,12 +157,13 @@ runs:
         done
         [ -f "$OUT_ST/lib/mpv.lib" ] || { echo "::error::mpv.lib not in pkg-config output"; exit 1; }
         echo "shipping $(ls "$OUT_ST"/lib/*.lib | wc -l) of $(ls "$ST"/lib/*.lib | wc -l) static libraries"
-        # Ports that only build as DLLs (e.g. the Vulkan loader, vulkan-1.dll)
-        # leave a DLL next to their import library even on the static triplet.
+        # The static zip must not need any DLL besides OS and VC++ runtime ones.
+        # A port that only builds as a DLL would leave one in bin/ even on the
+        # static triplet (as the Vulkan loader did); fail instead of shipping it.
         for dll in "$ST"/bin/*.dll; do
           [ -f "$dll" ] || continue
-          cp "$dll" "$OUT_ST/lib/"
-          echo "bundled DLL: $(basename "$dll")"
+          echo "::error::static triplet installed a DLL: $(basename "$dll")"
+          exit 1
         done
 
         cp -r "$DY/include" "$OUT_DY/"
@@ -206,7 +207,6 @@ runs:
         $cflags = (& $pkgconf --cflags --msvc-syntax mpv) -split '\s+' | Where-Object { $_ }
         $libs = (& $pkgconf --static --libs --msvc-syntax mpv) -split '\s+' | Where-Object { $_ }
         cl /nologo /MD "$tmp/test.c" @cflags /Fo"$tmp/static.obj" /Fe"$tmp/static.exe" /link @libs
-        $env:PATH = "$st/lib;$env:PATH"
         & "$tmp/static.exe"
 
         $dy = Resolve-Path "dynamic_${{ inputs.arch }}"

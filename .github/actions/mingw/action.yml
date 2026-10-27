@@ -101,7 +101,7 @@ runs:
         # of the encoder-only libraries (x264, x265, svt-av1, aom, lame, ...).
         # d3d11va/dxva2 are built into FFmpeg on Windows; nvcodec and opengl are
         # unsupported on Windows-ARM.
-        BASE="gpl,avcodec,avdevice,avfilter,avformat,swresample,swscale,dav1d,vpx,opus,speex,ilbc,openjpeg,ass,freetype,fontconfig,fribidi,drawtext,iconv,bzip2,lzma,zlib,openssl,xml2,srt,ssh,dvdvideo,snappy,soxr,vulkan"
+        BASE="gpl,avcodec,avdevice,avfilter,avformat,swresample,swscale,dav1d,vpx,opus,speex,ilbc,openjpeg,ass,freetype,fontconfig,fribidi,drawtext,iconv,bzip2,lzma,zlib,openssl,xml2,srt,ssh,dvdvideo,snappy,soxr"
         if [ "${{ inputs.arch }}" = "x64" ]; then
           FFMPEG="$BASE,opengl,nvcodec"
         else

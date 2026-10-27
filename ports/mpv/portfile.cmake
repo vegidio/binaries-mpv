@@ -151,7 +151,7 @@ endif"
         -Dd3d-hwaccel=enabled
         -Dwasapi=enabled
         -Dgl-win32=enabled
-        -Dvulkan=enabled
+        -Dvulkan=disabled
         -Dshaderc=enabled
         -Dspirv-cross=enabled
         -Dwin32-smtc=disabled

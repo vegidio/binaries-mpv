@@ -34,13 +34,18 @@ foreach(SUBMODULE IN LISTS SUBMODULES)
 endforeach()
 
 # The bundled Vulkan-Headers (always in sync with the vk.xml the code generator
-# reads) are used everywhere. On macOS there is no Vulkan loader in vcpkg
-# (no MoltenVK port), so Vulkan is disabled there and mpv renders via OpenGL.
-if(VCPKG_TARGET_IS_OSX)
+# reads) are used everywhere. Vulkan is Linux-only: macOS has no Vulkan loader
+# in vcpkg (no MoltenVK port) and renders via OpenGL; on Windows it would add a
+# load-time vulkan-1.dll dependency, and D3D11 covers rendering there.
+# shaderc stays on for Windows: the D3D11 backend compiles GLSL to SPIR-V.
+if(VCPKG_TARGET_IS_LINUX)
+    set(VULKAN enabled)
+else()
     set(VULKAN disabled)
+endif()
+if(VCPKG_TARGET_IS_OSX)
     set(SHADERC disabled)
 else()
-    set(VULKAN enabled)
     set(SHADERC enabled)
 endif()
 
