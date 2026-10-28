@@ -145,6 +145,17 @@ runs:
         # from wherever the zip is extracted.
         cp -r $ST/lib/pkgconfig $OUT_ST/lib/pkgconfig
         sed -i 's|^prefix=.*|prefix=${pcfiledir}/../..|' $OUT_ST/lib/pkgconfig/*.pc
+        # libva's .pc files are written for shared builds and omit what the bundled
+        # static libva-*.a pull from the system (checked with `nm -u`). libva.a
+        # itself only needs libc. libdrm resolves to the bundled libdrm.a.
+        PC=$OUT_ST/lib/pkgconfig
+        echo "Requires.private: libdrm" >> $PC/libva-drm.pc
+        echo "Requires.private: libdrm" >> $PC/libva-wayland.pc
+        echo "Requires.private: x11 x11-xcb xcb xcb-dri3 xext xfixes libdrm" >> $PC/libva-x11.pc
+        # vcpkg's shaderc.pc lists -lshaderc_util last, after the glslang and
+        # SPIRV-Tools libs it needs, so a single-pass static link misses them.
+        sed -i 's/ -lshaderc_util\b//; s/-lshaderc /-lshaderc -lshaderc_util /' $PC/shaderc.pc
+        grep -q -- '-lshaderc -lshaderc_util -lglslang' $PC/shaderc.pc
         # Strip DWARF debug info from the static .a files (it's ~90% of their size
         # and is not needed to link against them). --strip-debug keeps the symbol
         # table, so the libraries still link; native strip matches the runner arch.
