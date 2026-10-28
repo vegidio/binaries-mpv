@@ -47,6 +47,8 @@ On **Linux**, the display and audio stacks stay **dynamically linked to the syst
 
 On **macOS**, only Apple system frameworks and `/usr/lib` libraries (including the Swift runtime in `/usr/lib/swift`, part of the OS since 10.14.4) are linked dynamically. libmpv contains some Swift code; the Swift back-deployment archives it needs (`libswiftCompatibility*.a`) are included in `lib/`, so no Xcode-specific link flags are needed.
 
+Also on **macOS**, LuaJIT is built with internal unwinding (`LUAJIT_NO_UNWIND`, as LuaJIT does on iOS), so the static libraries use only the Objective-C and C++ personality routines. ld64's compact unwind format holds at most three per image, which leaves room for a third, such as Rust's `rust_eh_personality`, without `-Wl,-no_compact_unwind`. Lua scripts work as usual; the only difference is that C++ exceptions can't propagate through Lua frames, which libmpv never does.
+
 ### Dynamic
 
 macOS and Linux libraries find each other through `@rpath`/`@loader_path` and `$ORIGIN`, so keep the whole `lib/` folder together next to your binary. On Windows, put all the DLLs next to your `.exe`.
